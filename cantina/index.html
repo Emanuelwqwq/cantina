@@ -1,0 +1,949 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CantinaSmart — Controle de Refeições</title>
+
+  <!-- Firebase SDK -->
+  <script type="importmap">
+  {
+    "imports": {
+      "firebase": "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js",
+      "firebase/auth": "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js",
+      "firebase/firestore": "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js"
+    }
+  }
+  </script>
+
+  <!-- jsQR: scanning simples de QR -->
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+  <!-- QRCode.js: geração de QR -->
+  <script src="https://unpkg.com/qrcodejs@1.0.0/qrcode.min.js"></script>
+  
+  <!-- Verificação de carregamento de bibliotecas -->
+  <script>
+    window.librariesLoaded = { jsqr: false, qrcode: false };
+    const maxWait = 5000;
+    const startTime = Date.now();
+    
+    const checkLibraries = setInterval(() => {
+      if (typeof jsQR !== 'undefined') {
+        window.librariesLoaded.jsqr = true;
+        console.log('✅ jsQR carregado');
+      }
+      if (typeof window.QRCode !== 'undefined') {
+        window.librariesLoaded.qrcode = true;
+        console.log('✅ QRCode.js carregado');
+      }
+      
+      if (window.librariesLoaded.jsqr && window.librariesLoaded.qrcode) {
+        clearInterval(checkLibraries);
+        console.log('✅ Todas as bibliotecas carregadas com sucesso!');
+      }
+      
+      if (Date.now() - startTime > maxWait) {
+        clearInterval(checkLibraries);
+        if (!window.librariesLoaded.jsqr) {
+          console.error('⚠️ jsQR não foi carregado. Câmera desativada.');
+        }
+      }
+    }, 100);
+  </script>
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=DM+Sans:wght@400;500&display=swap" rel="stylesheet">
+  <!-- Tabler Icons -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css">
+
+  <link rel="stylesheet" href="styles.css">
+
+  <style>
+    /* ── Tela de espera de aprovação ── */
+    .pending-screen {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: var(--gray-50, #f9fafb);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 0;
+    }
+
+    /* ── Tela do aluno (carteirinha digital) ── */
+    .aluno-screen {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: #f0fdf4;
+      z-index: 90;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      padding: 20px;
+    }
+
+    .aluno-card-wrap {
+      width: 100%;
+      max-width: 460px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .aluno-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: white;
+      border-radius: 14px;
+      padding: 14px 18px;
+      box-shadow: 0 2px 12px rgba(8,80,65,.08);
+    }
+
+    .aluno-header-name {
+      font-family: 'Sora', sans-serif;
+      font-weight: 700;
+      font-size: 16px;
+      color: #085041;
+    }
+
+    .aluno-header-sub {
+      font-size: 12px;
+      color: #718096;
+      margin-top: 2px;
+    }
+
+    .aluno-qr-card {
+      background: white;
+      border-radius: 18px;
+      padding: 32px 24px;
+      box-shadow: 0 4px 24px rgba(8,80,65,.10);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .aluno-qr-title {
+      font-family: 'Sora', sans-serif;
+      font-weight: 700;
+      font-size: 13px;
+      color: #085041;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+    }
+
+    .aluno-info-row {
+      width: 100%;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .aluno-info-item {
+      background: #f0fdf4;
+      border-radius: 10px;
+      padding: 10px 14px;
+    }
+
+    .aluno-info-label {
+      font-size: 10px;
+      color: #718096;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+      margin-bottom: 3px;
+    }
+
+    .aluno-info-value {
+      font-size: 13px;
+      font-weight: 600;
+      color: #1a202c;
+      word-break: break-word;
+    }
+
+    .aluno-info-item.full { grid-column: 1/-1; }
+
+    /* ── Tipo de usuário (Aluno / Equipe) ── */
+    .auth-user-type-tabs {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 20px;
+      background: #f1f5f9;
+      border-radius: 12px;
+      padding: 4px;
+    }
+
+    .auth-user-type-btn {
+      padding: 10px;
+      border: none;
+      border-radius: 9px;
+      font-family: 'Sora', sans-serif;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all .2s;
+      background: transparent;
+      color: #718096;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    .auth-user-type-btn.active {
+      background: white;
+      color: #085041;
+      box-shadow: 0 2px 8px rgba(0,0,0,.08);
+    }
+
+    .aluno-login-box {
+      margin-bottom: 8px;
+    }
+
+    .pending-card {
+      background: white;
+      border-radius: 20px;
+      padding: 48px 40px 40px;
+      max-width: 420px;
+      width: 92%;
+      box-shadow: 0 8px 40px rgba(0,0,0,.10);
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0;
+    }
+
+    .pending-spinner {
+      width: 64px;
+      height: 64px;
+      border: 4px solid #e2e8f0;
+      border-top-color: var(--green, #085041);
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin-bottom: 24px;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .pending-title {
+      font-family: 'Sora', sans-serif;
+      font-size: 22px;
+      font-weight: 700;
+      color: #1a202c;
+      margin-bottom: 10px;
+    }
+
+    .pending-sub {
+      font-size: 14px;
+      color: #718096;
+      line-height: 1.6;
+      margin-bottom: 32px;
+    }
+
+    .pending-dots {
+      display: flex;
+      gap: 6px;
+      justify-content: center;
+      margin-bottom: 32px;
+    }
+
+    .pending-dots span {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--green, #085041);
+      animation: pulse-dot 1.4s ease-in-out infinite;
+    }
+    .pending-dots span:nth-child(2) { animation-delay: .2s; }
+    .pending-dots span:nth-child(3) { animation-delay: .4s; }
+
+    @keyframes pulse-dot {
+      0%, 80%, 100% { transform: scale(0.6); opacity: .4; }
+      40% { transform: scale(1); opacity: 1; }
+    }
+
+    /* ── Cards de aprovação (página admin) ── */
+    .approval-list {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .approval-card {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      background: white;
+      border: 1.5px solid var(--gray-100, #f1f5f9);
+      border-radius: 14px;
+      padding: 16px 20px;
+      transition: box-shadow .15s, border-color .15s;
+    }
+
+    .approval-card:hover {
+      box-shadow: 0 4px 16px rgba(0,0,0,.07);
+      border-color: #d1fae5;
+    }
+
+    .approval-avatar {
+      width: 46px;
+      height: 46px;
+      border-radius: 50%;
+      background: #d1fae5;
+      color: var(--green, #085041);
+      font-size: 15px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      font-family: 'Sora', sans-serif;
+    }
+
+    .approval-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .approval-name {
+      font-weight: 600;
+      font-size: 14px;
+      color: #1a202c;
+      margin-bottom: 2px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .approval-email {
+      font-size: 12px;
+      color: #718096;
+      margin-bottom: 6px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .approval-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .approval-actions {
+      display: flex;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .btn-success {
+      background: #22c55e;
+      color: white;
+      border: none;
+    }
+    .btn-success:hover { background: #16a34a; }
+
+    /* Badge numérico no nav */
+    .nav-item.has-pending {
+      background: rgba(229, 62, 62, .08);
+    }
+
+    @media (max-width: 600px) {
+      .approval-card { flex-wrap: wrap; }
+      .approval-actions { width: 100%; justify-content: flex-end; }
+      .pending-card { padding: 36px 24px 32px; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- Loading Screen -->
+<div class="loading-overlay" id="loading">
+  <div class="spinner"></div>
+  <div class="loading-text">Inicializando…</div>
+</div>
+
+<!-- Toast Container -->
+<div class="toast-container" id="toasts"></div>
+
+<!-- ════════════════════════════════════════
+     TELA DE ESPERA DE APROVAÇÃO
+     Mostrada enquanto admin não aprova o login
+════════════════════════════════════════ -->
+<div class="pending-screen" id="pending-screen">
+  <div class="pending-card">
+    <div class="pending-spinner"></div>
+    <div class="pending-title">Aguardando aprovação</div>
+    <p class="pending-sub">
+      Sua solicitação de acesso foi enviada ao administrador.<br>
+      Por favor, aguarde enquanto ele confirma seu login.
+    </p>
+    <div class="pending-dots">
+      <span></span><span></span><span></span>
+    </div>
+    <button class="btn btn-ghost" id="btn-cancel-pending" style="width:100%;max-width:240px;">
+      <i class="ti ti-x"></i> Cancelar solicitação
+    </button>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════
+     AUTH SCREEN (Tela de login/registro)
+════════════════════════════════════════ -->
+<div class="auth-screen" id="auth-screen">
+  <div class="auth-card">
+    <div class="auth-logo">
+      <i class="ti ti-bowl-chopsticks"></i>
+    </div>
+    <h1 class="auth-title">CantinaSmart</h1>
+    <p class="auth-subtitle">Controle de Refeições Escolar</p>
+
+    <!-- TIPO DE USUÁRIO: Aluno | Equipe -->
+    <div class="auth-user-type-tabs">
+      <button class="auth-user-type-btn active" id="btn-type-aluno" onclick="switchUserType('aluno')">
+        <i class="ti ti-school"></i> Sou Aluno
+      </button>
+      <button class="auth-user-type-btn" id="btn-type-staff" onclick="switchUserType('staff')">
+        <i class="ti ti-shield-lock"></i> Equipe
+      </button>
+    </div>
+
+    <!-- ══ ÁREA DO ALUNO ══ -->
+    <div id="area-aluno">
+      <div class="aluno-login-box">
+        <p style="font-size:13px;color:var(--gray-500,#718096);text-align:center;margin-bottom:16px;">
+          Entre com o número da sua matrícula para ver sua carteirinha digital
+        </p>
+        <form id="aluno-login-form">
+          <div class="form-group full">
+            <label>Número de matrícula</label>
+            <input type="text" id="aluno-matricula" placeholder="Ex: 202400123456789"
+              maxlength="15" inputmode="numeric" pattern="[0-9]+" required
+              style="font-size:18px;letter-spacing:.05em;text-align:center;">
+          </div>
+          <button type="submit" class="btn btn-primary btn-block" style="margin-top:4px;">
+            <i class="ti ti-qrcode"></i> Ver minha carteirinha
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <!-- ══ ÁREA DA EQUIPE ══ -->
+    <div id="area-staff" style="display:none;">
+      <div class="auth-tabs">
+        <button class="auth-tab-btn active" data-tab="login">
+          <i class="ti ti-login"></i> Entrar
+        </button>
+        <button class="auth-tab-btn" data-tab="request-access">
+          <i class="ti ti-mail"></i> Solicitar acesso
+        </button>
+        <button class="auth-tab-btn" data-tab="signup">
+          <i class="ti ti-user-plus"></i> Criar conta
+        </button>
+      </div>
+
+      <!-- LOGIN FORM -->
+      <form class="auth-form active" id="login-form">
+        <div class="form-group full">
+          <label>Email</label>
+          <input type="email" id="login-email" placeholder="seu@email.com" required>
+        </div>
+        <div class="form-group full">
+          <label>Senha</label>
+          <input type="password" id="login-senha" placeholder="••••••••" required>
+        </div>
+        <button type="submit" class="btn btn-primary btn-block">
+          <i class="ti ti-login"></i> Entrar
+        </button>
+        <button type="button" class="btn-forgot" id="btn-forgot">
+          Esqueci minha senha
+        </button>
+      </form>
+
+      <!-- SOLICITAR ACESSO FORM (sem criar conta — admin autoriza depois) -->
+      <form class="auth-form" id="request-access-form" style="display:none;">
+        <div style="background:#eff6ff;border:1.5px solid #bfdbfe;border-radius:10px;padding:12px 14px;margin-bottom:16px;font-size:13px;color:#1d4ed8;">
+          <i class="ti ti-info-circle"></i>
+          Preencha seus dados e o administrador receberá sua solicitação.
+          Após aprovação, você poderá criar sua senha.
+        </div>
+        <div class="form-group full">
+          <label>Nome completo</label>
+          <input type="text" id="request-nome" placeholder="Seu nome" required>
+        </div>
+        <div class="form-group full">
+          <label>Email institucional</label>
+          <input type="email" id="request-email" placeholder="seu@email.com" required>
+        </div>
+        <button type="submit" class="btn btn-primary btn-block">
+          <i class="ti ti-send"></i> Enviar solicitação
+        </button>
+        <p class="auth-hint">Já tem acesso autorizado? <a href="#" onclick="switchAuthTab('signup')">Crie sua senha</a></p>
+      </form>
+
+      <!-- SIGNUP FORM (para quem já foi autorizado pelo admin) -->
+      <form class="auth-form" id="signup-form" style="display:none;">
+        <div style="background:#f0fdf4;border:1.5px solid #bbf7d0;border-radius:10px;padding:12px 14px;margin-bottom:16px;font-size:13px;color:#166534;">
+          <i class="ti ti-lock-check"></i>
+          Apenas emails autorizados pelo administrador podem criar conta.
+        </div>
+        <div class="form-group full">
+          <label>Nome completo</label>
+          <input type="text" id="signup-nome" placeholder="Seu nome" required>
+        </div>
+        <div class="form-group full">
+          <label>Email</label>
+          <input type="email" id="signup-email" placeholder="seu@email.com" required>
+        </div>
+        <div class="form-group full">
+          <label>Senha (mín. 6 caracteres)</label>
+          <input type="password" id="signup-senha" placeholder="••••••••" required>
+          <div class="password-strength" id="pwd-strength">
+            <div class="strength-bar">
+              <div class="strength-fill" id="strength-fill"></div>
+            </div>
+            <span class="strength-label" id="strength-label"></span>
+          </div>
+        </div>
+        <div class="form-group full">
+          <label>Confirmar senha</label>
+          <input type="password" id="signup-senha2" placeholder="••••••••" required>
+        </div>
+        <button type="submit" class="btn btn-primary btn-block">
+          <i class="ti ti-user-plus"></i> Criar conta
+        </button>
+        <p class="auth-hint">Ainda não autorizado? <a href="#" onclick="switchAuthTab('request-access')">Solicite acesso</a></p>
+      </form>
+    </div><!-- /area-staff -->
+
+    <div class="auth-footer">
+      <p><small>🔒 Seus dados estão protegidos</small></p>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════
+     TELA DO ALUNO (Carteirinha digital)
+════════════════════════════════════════ -->
+<div class="aluno-screen" id="aluno-screen">
+  <div class="aluno-card-wrap">
+    <div class="aluno-header">
+      <div>
+        <div class="aluno-header-name" id="aluno-header-name">Olá, Aluno!</div>
+        <div class="aluno-header-sub"><i class="ti ti-id-badge"></i> Carteirinha digital</div>
+      </div>
+      <button class="btn btn-ghost btn-sm" id="btn-aluno-logout" style="font-size:13px;">
+        <i class="ti ti-logout"></i> Sair
+      </button>
+    </div>
+
+    <div class="aluno-qr-card">
+      <div class="aluno-qr-title"><i class="ti ti-qrcode"></i> Meu QR Code</div>
+      <canvas id="aluno-qr-canvas" width="200" height="200" style="border-radius:8px;"></canvas>
+      <p style="font-size:12px;color:#718096;text-align:center;margin:0;">
+        Apresente este código na cantina para registrar sua refeição
+      </p>
+    </div>
+
+    <div class="aluno-qr-card" style="padding:20px 24px;gap:12px;">
+      <div class="aluno-qr-title"><i class="ti ti-user"></i> Minhas informações</div>
+      <div class="aluno-info-row">
+        <div class="aluno-info-item full">
+          <div class="aluno-info-label">Nome</div>
+          <div class="aluno-info-value" id="aluno-info-nome">—</div>
+        </div>
+        <div class="aluno-info-item">
+          <div class="aluno-info-label">Matrícula</div>
+          <div class="aluno-info-value" id="aluno-info-matricula">—</div>
+        </div>
+        <div class="aluno-info-item">
+          <div class="aluno-info-label">Turma</div>
+          <div class="aluno-info-value" id="aluno-info-turma">—</div>
+        </div>
+      </div>
+    </div>
+
+    <p style="font-size:11px;color:#a0aec0;text-align:center;">
+      CantinaSmart · Acesso aluno
+    </p>
+  </div>
+</div>
+
+
+<div class="app-screen" id="app-screen" style="display:none;">
+  <div class="layout">
+
+    <!-- SIDEBAR -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-brand">
+        <div class="brand-icon"><i class="ti ti-bowl-chopsticks"></i></div>
+        <div class="brand-name">CantinaSmart</div>
+        <div class="brand-sub">Controle de refeições</div>
+      </div>
+
+      <nav class="sidebar-nav">
+        <div class="nav-label">Principal</div>
+        <button class="nav-item active" data-page="dashboard">
+          <i class="ti ti-layout-dashboard"></i> Dashboard
+        </button>
+        <button class="nav-item" data-page="cadastro">
+          <i class="ti ti-users"></i> Alunos
+        </button>
+        <div class="nav-label">Cantina</div>
+        <button class="nav-item" data-page="carteirinha">
+          <i class="ti ti-id-badge"></i> Carteirinhas
+        </button>
+        <button class="nav-item" data-page="leitor">
+          <i class="ti ti-scan"></i> Leitor QR
+        </button>
+        <div class="nav-label">Relatórios</div>
+        <button class="nav-item" data-page="historico">
+          <i class="ti ti-history"></i> Histórico
+        </button>
+        <button class="nav-item" data-page="relatorios">
+          <i class="ti ti-chart-bar"></i> Relatórios
+        </button>
+        <!-- Visível apenas para admin (ocultado via applyPermissions) -->
+        <div class="nav-label">Administração</div>
+        <button class="nav-item" data-page="aprovacoes" style="display:none;">
+          <i class="ti ti-shield-check"></i> Aprovações
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="status-dot">
+          <div class="dot" id="fb-dot"></div>
+          <span id="fb-status">Conectando…</span>
+        </div>
+        <button class="nav-item" style="margin-top:16px;color:rgba(255,255,255,0.5);" id="logout-btn">
+          <i class="ti ti-logout"></i> Sair
+        </button>
+      </div>
+    </aside>
+
+    <!-- MAIN -->
+    <div class="main">
+      <header class="topbar">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <button class="hamburger" id="hamburger-btn">
+            <i class="ti ti-menu-2"></i>
+          </button>
+          <span class="page-title" id="topbar-title">Dashboard</span>
+        </div>
+        <div class="topbar-right">
+          <div class="date-badge" id="date-badge"></div>
+          <div class="user-info">
+            <span id="user-name"></span>
+          </div>
+        </div>
+      </header>
+
+      <div class="content">
+
+        <!-- ════════════ DASHBOARD ════════════ -->
+        <div class="page active" id="page-dashboard">
+          <div class="stats-grid">
+            <div class="stat-card s-green">
+              <div class="stat-icon s-green"><i class="ti ti-users"></i></div>
+              <div class="stat-num" id="d-total">—</div>
+              <div class="stat-lbl">Total de alunos</div>
+            </div>
+            <div class="stat-card s-blue">
+              <div class="stat-icon s-blue"><i class="ti ti-check"></i></div>
+              <div class="stat-num" id="d-today">—</div>
+              <div class="stat-lbl">Refeições hoje</div>
+            </div>
+            <div class="stat-card s-amber">
+              <div class="stat-icon s-amber"><i class="ti ti-clock"></i></div>
+              <div class="stat-num" id="d-pend">—</div>
+              <div class="stat-lbl">Pendentes hoje</div>
+            </div>
+            <div class="stat-card s-red">
+              <div class="stat-icon s-red"><i class="ti ti-ban"></i></div>
+              <div class="stat-num" id="d-denied">—</div>
+              <div class="stat-lbl">Negados hoje</div>
+            </div>
+          </div>
+          <div class="dash-grid">
+            <div class="card">
+              <div class="card-title"><i class="ti ti-clock"></i> Últimas refeições</div>
+              <div id="dash-recent"></div>
+            </div>
+            <div class="card">
+              <div class="card-title"><i class="ti ti-school"></i> Por turma hoje</div>
+              <div id="dash-turmas"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ════════════ CADASTRO ════════════ -->
+        <div class="page" id="page-cadastro">
+          <div class="card">
+            <div class="card-title"><i class="ti ti-user-plus"></i> Novo aluno</div>
+            <form id="form-cadastro" class="form-grid">
+              <div class="form-group">
+                <label>Nome completo *</label>
+                <input type="text" name="nome" placeholder="Nome do aluno" required>
+                <small class="form-error"></small>
+              </div>
+              <div class="form-group">
+                <label>Matrícula *</label>
+                <input type="text" name="matricula" placeholder="Ex: 202400123456789" maxlength="15" required>
+                <small class="form-error"></small>
+              </div>
+              <div class="form-group">
+                <label>Turma *</label>
+                <select name="turma" required>
+                  <option value="">Selecionar…</option>
+                  <option>1º EM Desenvolvimento de Sistemas A</option>
+                  <option>1º EM Desenvolvimento de Sistemas B</option>
+                  <option>2º EM Desenvolvimento de Sistemas</option>
+                  <option>2º EM Marketing Digital</option>
+                </select>
+              </div>
+              <div class="form-group full">
+                <label>Nome do responsável</label>
+                <input type="text" name="responsavel" placeholder="Pai/mãe/responsável">
+              </div>
+              <button type="submit" class="btn btn-primary btn-block">
+                <i class="ti ti-user-plus"></i> Cadastrar aluno
+              </button>
+            </form>
+          </div>
+
+          <div class="card">
+            <div class="card-title"><i class="ti ti-list"></i> Alunos cadastrados</div>
+            <div class="search-wrap">
+              <i class="ti ti-search"></i>
+              <input type="text" placeholder="Buscar por nome ou matrícula…" id="search-alunos">
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Aluno</th>
+                    <th>Matrícula</th>
+                    <th>Turma</th>
+                    <th>Status hoje</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="student-tbody">
+                  <tr><td colspan="5"><div class="empty"><i class="ti ti-loader"></i><p>Carregando…</p></div></td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- ════════════ CARTEIRINHA ════════════ -->
+        <div class="page" id="page-carteirinha">
+          <div class="qr-layout">
+            <div class="card" style="margin-bottom:0;">
+              <div class="card-title"><i class="ti ti-search"></i> Selecionar aluno</div>
+              <div class="search-wrap">
+                <i class="ti ti-search"></i>
+                <input type="text" placeholder="Buscar…" id="search-carteirinha">
+              </div>
+              <div class="student-pick-list" id="pick-list">
+                <div class="empty"><i class="ti ti-users"></i><p>Nenhum aluno carregado</p></div>
+              </div>
+            </div>
+            <div>
+              <div id="carteirinha-display">
+                <div class="empty" style="padding:80px 0;">
+                  <i class="ti ti-id-badge"></i>
+                  <p>Selecione um aluno à esquerda para gerar a carteirinha</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ════════════ LEITOR ════════════ -->
+        <div class="page" id="page-leitor">
+          <div class="scanner-grid">
+            <div>
+              <div class="cam-viewport" id="cam-viewport">
+                <!-- Container para HTML5-QRcode -->
+                <div id="qr-scanner" style="width: 100%; height: 100%;"></div>
+                <div class="cam-overlay">
+                  <div class="scan-frame">
+                    <div class="corner tl"></div>
+                    <div class="corner tr"></div>
+                    <div class="corner bl"></div>
+                    <div class="corner br"></div>
+                    <div class="scan-line"></div>
+                  </div>
+                  <div class="cam-idle" id="cam-idle">
+                    <i class="ti ti-camera-off"></i>
+                    Câmera desativada
+                  </div>
+                </div>
+              </div>
+              <div style="display:flex;gap:10px;margin-top:12px;">
+                <button class="btn btn-primary" style="flex:1;" id="btn-cam">
+                  <i class="ti ti-camera"></i> Ativar câmera
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <div class="result-box" id="result-box">
+                <div class="result-icon" id="result-icon"></div>
+                <div class="result-title" id="result-title"></div>
+                <div class="result-sub" id="result-sub"></div>
+              </div>
+
+              <div class="card">
+                <div class="card-title"><i class="ti ti-keyboard"></i> Entrada manual</div>
+                <div class="form-group" style="margin-bottom:12px;">
+                  <label>Matrícula do aluno</label>
+                  <input type="text" id="manual-inp" placeholder="Digite o número da matrícula…">
+                </div>
+                <button class="btn btn-primary btn-block" id="btn-manual">
+                  <i class="ti ti-check"></i> Registrar refeição
+                </button>
+              </div>
+
+              <div class="card" style="margin-top:0;">
+                <div class="card-title"><i class="ti ti-list"></i> Hoje</div>
+                <div id="log-today" style="max-height:260px;overflow-y:auto;">
+                  <div class="empty"><i class="ti ti-coffee"></i><p>Nenhuma leitura ainda hoje</p></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ════════════ HISTÓRICO ════════════ -->
+        <div class="page" id="page-historico">
+          <div class="card">
+            <div class="card-title"><i class="ti ti-history"></i> Histórico completo</div>
+            <div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;">
+              <input type="date" id="filter-date" style="padding:8px 12px;border:1.5px solid var(--gray-100);border-radius:var(--radius-sm);font-family:'DM Sans',sans-serif;font-size:14px;">
+              <div class="search-wrap" style="margin-bottom:0;flex:1;min-width:160px;">
+                <i class="ti ti-search"></i>
+                <input type="text" placeholder="Buscar por nome…" id="hist-search">
+              </div>
+              <button class="btn btn-ghost" id="btn-clear-filters"><i class="ti ti-x"></i> Limpar</button>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Aluno</th>
+                    <th>Matrícula</th>
+                    <th>Turma</th>
+                    <th>Data</th>
+                    <th>Hora</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody id="hist-tbody">
+                  <tr><td colspan="6"><div class="empty"><i class="ti ti-loader"></i><p>Carregando…</p></div></td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- ════════════ RELATÓRIOS ════════════ -->
+        <div class="page" id="page-relatorios">
+          <div class="card">
+            <div class="card-title"><i class="ti ti-chart-bar"></i> Relatórios</div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;margin-bottom:20px;">
+              <button class="report-btn" id="btn-export-csv">
+                <i class="ti ti-download"></i>
+                <div>
+                  <strong>Exportar CSV</strong>
+                  <small>Baixar dados em Excel</small>
+                </div>
+              </button>
+              <button class="report-btn" id="btn-report-turmas">
+                <i class="ti ti-chart-pie"></i>
+                <div>
+                  <strong>Por turma</strong>
+                  <small>Distribuição por turma</small>
+                </div>
+              </button>
+              <button class="report-btn" id="btn-report-periodo">
+                <i class="ti ti-calendar"></i>
+                <div>
+                  <strong>Por período</strong>
+                  <small>Refeições por data</small>
+                </div>
+              </button>
+            </div>
+          </div>
+
+          <div id="report-container"></div>
+        </div>
+
+        <!-- ════════════ APROVAÇÕES (admin only) ════════════ -->
+        <div class="page" id="page-aprovacoes">
+          <!-- Sub-tabs -->
+          <div style="display:flex;gap:8px;margin-bottom:20px;border-bottom:2px solid var(--gray-100);padding-bottom:0;">
+            <button class="btn btn-ghost" id="tab-login-approvals" onclick="switchAprovTab('logins')"
+              style="border-radius:8px 8px 0 0;border-bottom:2px solid #085041;color:#085041;font-weight:700;margin-bottom:-2px;">
+              <i class="ti ti-login"></i> Logins pendentes
+              <span id="badge-login-count" style="display:none;background:#E53E3E;color:white;border-radius:50%;width:18px;height:18px;font-size:10px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;margin-left:4px;"></span>
+            </button>
+            <button class="btn btn-ghost" id="tab-access-requests" onclick="switchAprovTab('requests')"
+              style="border-radius:8px 8px 0 0;color:var(--gray-500);margin-bottom:-2px;">
+              <i class="ti ti-mail"></i> Solicitações de acesso
+              <span id="badge-request-count" style="display:none;background:#E53E3E;color:white;border-radius:50%;width:18px;height:18px;font-size:10px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;margin-left:4px;"></span>
+            </button>
+          </div>
+
+          <!-- Logins pendentes -->
+          <div id="section-logins">
+            <div class="card">
+              <div class="card-title">
+                <i class="ti ti-shield-check"></i> Solicitações de login pendentes
+              </div>
+              <p style="font-size:13px;color:var(--gray-500);margin-bottom:20px;">
+                Quando alguém faz login, a solicitação aparece aqui para você aprovar ou recusar.
+              </p>
+              <div class="approval-list" id="aprovacoes-list">
+                <div class="empty" style="padding:60px 0;">
+                  <i class="ti ti-check-circle" style="font-size:48px;color:var(--green);margin-bottom:8px;"></i>
+                  <p>Nenhum login pendente no momento</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Solicitações de acesso (novos usuários) -->
+          <div id="section-requests" style="display:none;">
+            <div class="card">
+              <div class="card-title">
+                <i class="ti ti-mail-check"></i> Solicitações de acesso — novos usuários
+              </div>
+              <p style="font-size:13px;color:var(--gray-500);margin-bottom:20px;">
+                Pessoas que pediram acesso pelo formulário. Ao aprovar, o email é adicionado
+                à lista de autorizados e a pessoa pode criar sua senha.
+              </p>
+              <div class="approval-list" id="access-requests-list">
+                <div class="empty" style="padding:60px 0;">
+                  <i class="ti ti-inbox" style="font-size:48px;color:var(--green);margin-bottom:8px;"></i>
+                  <p>Nenhuma solicitação pendente</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /content -->
+    </div><!-- /main -->
+  </div><!-- /layout -->
+</div><!-- /app-screen -->
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

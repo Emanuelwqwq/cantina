@@ -78,6 +78,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     setupEventListeners();
     updateDateBadge();
 
+    // Verificar se bibliotecas foram carregadas
+    console.log('✅ Firebase inicializado');
+    console.log('✅ Html5Qrcode disponível:', !!window.Html5Qrcode);
+    console.log('✅ QRCode.js disponível:', !!window.QRCode);
+
   } catch (error) {
     document.getElementById('auth-screen').style.display = 'flex';
     document.getElementById('app-screen').style.display = 'none';
@@ -97,9 +102,10 @@ async function handleAuthChange(user) {
 
   try {
     if (user) {
+      authScreen.style.display = 'none';
       pendingScreen.style.display = 'none';
-      appScreen.style.display = 'block';
       await enterApp();
+      appScreen.style.display = 'block';
     } else {
       authScreen.style.display = 'flex';
       appScreen.style.display = 'none';
@@ -215,7 +221,7 @@ function showAlunoScreen(aluno) {
     const canvas = document.getElementById('aluno-qr-canvas');
     if (!canvas) return;
     const qrData = String(aluno.matricula).trim();
-    drawQRToCanvas(canvas, qrData, '#085041', '#ffffff');
+    drawQRToCanvas(canvas, qrData, '#000000', '#ffffff');
   }, 100);
 }
 
@@ -594,7 +600,10 @@ function setupEventListeners() {
         toast.error(result.message);
         return;
       }
-      // Se o login foi bem-sucedido, o auth state change exibirá a app.
+      authScreen.style.display = 'none';
+      document.getElementById('pending-screen').style.display = 'none';
+      await enterApp();
+      document.getElementById('app-screen').style.display = 'block';
     } finally {
       btn.disabled = false;
     }
@@ -973,7 +982,7 @@ function renderCarteirinha() {
     <div class="carteirinha">
       <div class="c-school"><i class="ti ti-school"></i> ${schoolConfig.name}</div>
       <div class="c-body">
-        <div class="c-qr-wrap"><canvas id="qr-canvas" width="108" height="108"></canvas></div>
+        <div class="c-qr-wrap"><canvas id="qr-canvas" width="200" height="200"></canvas></div>
         <div class="c-info">
           <div class="c-name">${escapeHtml(a.nome.split(' ')[0])}</div>
           <div class="c-field"><div class="c-label">Nome completo</div><div class="c-val">${escapeHtml(a.nome)}</div></div>
@@ -994,59 +1003,48 @@ function renderCarteirinha() {
     const canvas = document.getElementById('qr-canvas');
     if (!canvas) return;
     const qrData = String(a.matricula).trim();
-    drawQRToCanvas(canvas, qrData, '#085041', '#ffffff');
+    drawQRToCanvas(canvas, qrData, '#000000', '#ffffff');
   }, 50);
 }
 
 function drawQRToCanvas(canvas, text, dark = '#000', light = '#fff') {
   try {
-    if (window.qrcode) {
-      const qr = window.qrcode(0, 'M');
-      qr.addData(text);
-      qr.make();
-      const size = Math.min(canvas.width, canvas.height);
-      const ctx = canvas.getContext('2d');
-      ctx.imageSmoothingEnabled = false;
-      const cells = qr.getModuleCount();
-      const cellSize = size / cells;
-      ctx.fillStyle = light;
-      ctx.fillRect(0, 0, size, size);
-      ctx.fillStyle = dark;
-      for (let r = 0; r < cells; r++) {
-        for (let c = 0; c < cells; c++) {
-          if (qr.isDark(r, c)) {
-            ctx.fillRect(
-              Math.floor(c * cellSize),
-              Math.floor(r * cellSize),
-              Math.ceil(cellSize),
-              Math.ceil(cellSize)
-            );
-          }
-        }
-      }
+    if (!canvas || !window.QRCode) {
+      console.warn('Canvas ou QRCode.js não disponível');
       return;
     }
-    if (window.QRCode) {
-      const div = document.createElement('div');
-      new window.QRCode(div, { text, width: canvas.width, height: canvas.height,
-        colorDark: dark, colorLight: light, correctLevel: window.QRCode.CorrectLevel.M });
-      setTimeout(() => {
-        const img = div.querySelector('img') || div.querySelector('canvas');
-        if (img) {
-          const ctx = canvas.getContext('2d');
-          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        }
-      }, 200);
-      return;
-    }
+    
+    // Limpar canvas
     const ctx = canvas.getContext('2d');
     ctx.fillStyle = light;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = dark;
-    ctx.font = '9px monospace';
-    ctx.fillText('QR indisponível', 4, canvas.height / 2);
+    
+    // Gerar QR code em elemento temporário
+    const tempDiv = document.createElement('div');
+    tempDiv.style.display = 'none';
+    document.body.appendChild(tempDiv);
+    
+    new window.QRCode(tempDiv, {
+      text: text,
+      width: canvas.width,
+      height: canvas.height,
+      colorDark: dark,
+      colorLight: light,
+      correctLevel: window.QRCode.CorrectLevel.H,
+      quiet: 2
+    });
+    
+    // Esperar renderização e copiar para canvas
+    setTimeout(() => {
+      const qrImage = tempDiv.querySelector('img') || tempDiv.querySelector('canvas');
+      if (qrImage) {
+        ctx.drawImage(qrImage, 0, 0, canvas.width, canvas.height);
+        console.log('✅ QR code gerado:', text);
+      }
+      document.body.removeChild(tempDiv);
+    }, 100);
   } catch(e) {
-    console.error('Erro ao gerar QR:', e);
+    console.error('❌ Erro ao gerar QR code:', e);
   }
 }
 
@@ -1134,135 +1132,182 @@ function processManual() {
   document.getElementById('manual-inp').value = '';
 }
 
-// ── Camera ──
+// ── Scanner jsQR (simples e funcional) ──
+let cameraVideo = null;
+let cameraCanvas = null;
+let cameraCtx = null;
+let cameraStream = null;
+let scanAnimationId = null;
+let lastScanTime = 0;
+let QR_COOLDOWN = 3000; // 3 segundos entre leituras
+
+function waitForLibraries(timeout = 3000) {
+  return new Promise((resolve, reject) => {
+    if (typeof jsQR !== 'undefined') {
+      console.log('✅ jsQR já está disponível');
+      resolve(true);
+      return;
+    }
+    
+    console.log('⏳ Aguardando jsQR carregar...');
+    const startTime = Date.now();
+    
+    const interval = setInterval(() => {
+      if (typeof jsQR !== 'undefined') {
+        clearInterval(interval);
+        console.log('✅ jsQR carregado!');
+        resolve(true);
+      }
+      
+      if (Date.now() - startTime > timeout) {
+        clearInterval(interval);
+        reject(new Error('jsQR não foi carregado'));
+      }
+    }, 100);
+  });
+}
+
+function processQRFrame() {
+  if (!cameraCanvas || !cameraCtx || !cameraVideo) return;
+  
+  // Desenhar o frame de vídeo no canvas
+  cameraCtx.drawImage(cameraVideo, 0, 0, cameraCanvas.width, cameraCanvas.height);
+  
+  // Obter dados da imagem
+  const imageData = cameraCtx.getImageData(0, 0, cameraCanvas.width, cameraCanvas.height);
+  const qrCode = jsQR(imageData.data, imageData.width, imageData.height);
+  
+  // Se detectou QR code
+  if (qrCode) {
+    const now = Date.now();
+    const timeSinceLastScan = now - lastScanTime;
+    
+    // Respeitar o cooldown entre leituras
+    if (timeSinceLastScan > QR_COOLDOWN) {
+      lastScanTime = now;
+      
+      if (!scanning) {
+        scanning = true;
+        console.log('✅ QR DETECTADO:', qrCode.data);
+        console.log('⏱️ Próxima leitura disponível em 3 segundos');
+        toast.success('✅ QR lido! Aguarde...');
+        
+        try {
+          const d = JSON.parse(qrCode.data);
+          processRefeicao(d.mat || qrCode.data);
+        } catch {
+          processRefeicao(qrCode.data);
+        }
+        
+        setTimeout(() => { scanning = false; }, QR_COOLDOWN);
+      }
+    }
+  }
+  
+  // Continuar processando frames
+  scanAnimationId = requestAnimationFrame(processQRFrame);
+}
+
 function toggleCam() {
   const btn = document.getElementById('btn-cam');
-  const video = document.getElementById('video');
+  const qrContainer = document.getElementById('qr-scanner');
   const idle = document.getElementById('cam-idle');
 
-  if (camStream) {
-    camStream.getTracks().forEach(t => t.stop());
-    camStream = null;
-    if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
-    _scanCanvas = null; _scanCtx = null; // reset cache
-    video.srcObject = null;
-    video.style.display = 'none';
+  // Parar câmera
+  if (cameraStream) {
+    // Parar o loop de animação
+    if (scanAnimationId) {
+      cancelAnimationFrame(scanAnimationId);
+      scanAnimationId = null;
+    }
+    
+    // Parar stream de vídeo
+    cameraStream.getTracks().forEach(track => track.stop());
+    cameraStream = null;
+    cameraVideo = null;
+    cameraCanvas = null;
+    cameraCtx = null;
+    lastScanTime = 0;
+    
+    // Voltar ao estado inicial
+    qrContainer.innerHTML = '';
+    qrContainer.style.display = 'none';
     idle.style.display = 'flex';
     btn.innerHTML = '<i class="ti ti-camera"></i> Ativar câmera';
     btn.className = 'btn btn-primary';
+    btn.disabled = false;
+    console.log('📷 Câmera desativada');
     return;
   }
 
-  const constraints = {
-    video: {
-      facingMode: { ideal: 'environment' },
-      width: { ideal: 1280 },
-      height: { ideal: 720 }
-    }
-  };
+  // Iniciar câmera
+  qrContainer.style.display = 'block';
+  idle.style.display = 'none';
+  btn.innerHTML = '<i class="ti ti-x"></i> Carregando...';
+  btn.className = 'btn btn-warning';
+  btn.disabled = true;
+  toast.info('⏳ Ativando câmera...');
 
-  navigator.mediaDevices.getUserMedia(constraints)
-    .catch(err => {
-      if (err.name === 'OverconstrainedError' || err.name === 'NotReadableError' || err.name === 'NotFoundError') {
-        return navigator.mediaDevices.getUserMedia({ video: true });
-      }
-      throw err;
-    })
-    .then(stream => {
-      camStream = stream;
-      video.srcObject = stream;
-      video.playsInline = true;
-      video.muted = true;
-      video.style.display = 'block';
-      idle.style.display = 'none';
+  waitForLibraries(3000).then(() => {
+    if (typeof jsQR === 'undefined') {
+      throw new Error('jsQR não carregou');
+    }
+
+    // Criar elementos de vídeo e canvas
+    cameraVideo = document.createElement('video');
+    cameraCanvas = document.createElement('canvas');
+    cameraCtx = cameraCanvas.getContext('2d');
+    
+    cameraVideo.style.display = 'none';
+    cameraCanvas.width = 400;
+    cameraCanvas.height = 400;
+    cameraCanvas.style.width = '100%';
+    cameraCanvas.style.height = '100%';
+    cameraCanvas.style.objectFit = 'cover';
+    
+    qrContainer.appendChild(cameraCanvas);
+    qrContainer.appendChild(cameraVideo);
+
+    // Pedir acesso à câmera
+    return navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: { ideal: 400 }, height: { ideal: 400 } }
+    });
+  }).then(stream => {
+    cameraStream = stream;
+    cameraVideo.srcObject = stream;
+    cameraVideo.play();
+    
+    // Esperar o vídeo estar pronto
+    cameraVideo.onloadedmetadata = () => {
+      cameraCanvas.width = cameraVideo.videoWidth;
+      cameraCanvas.height = cameraVideo.videoHeight;
+      
+      // Começar a processar frames
+      scanAnimationId = requestAnimationFrame(processQRFrame);
+      
+      btn.disabled = false;
       btn.innerHTML = '<i class="ti ti-x"></i> Parar câmera';
       btn.className = 'btn btn-danger';
-      _scanCanvas = null; _scanCtx = null; // reset cache
+      console.log('✅ Câmera ativada com jsQR!');
+      console.log('⏱️ Tempo entre leituras: ' + QR_COOLDOWN + 'ms');
+      toast.success('📷 Câmera ativada!');
+    };
 
-      // Espera o video estar pronto para começar scan
-      video.onloadedmetadata = () => {
-        video.play().then(() => scheduleScan()).catch(() => scheduleScan());
-      };
-      // Fallback se o evento já foi disparado
-      if (video.readyState >= 2) {
-        video.play().then(() => scheduleScan()).catch(() => scheduleScan());
-      }
-    })
-    .catch((err) => {
-      console.error('Erro câmera:', err);
-      toast.error('Não foi possível acessar a câmera. Verifique permissões e use HTTPS.');
-    });
-}
-
-let lastScan = 0;
-let _scanCanvas = null;
-let _scanCtx = null;
-
-function scheduleScan() {
-  rafId = requestAnimationFrame((ts) => {
-    if (!camStream) return;
-    if (ts - lastScan > 300) {
-      lastScan = ts;
-      scanQR();
-    }
-    scheduleScan();
+  }).catch(err => {
+    console.error('❌ Erro ao ativar câmera:', err);
+    toast.error('Erro câmera: ' + (err.message || err));
+    
+    qrContainer.innerHTML = '';
+    qrContainer.style.display = 'none';
+    idle.style.display = 'flex';
+    btn.innerHTML = '<i class="ti ti-camera"></i> Ativar câmera';
+    btn.className = 'btn btn-primary';
+    btn.disabled = false;
+    cameraStream = null;
   });
 }
 
-function scanQR() {
-  const video = document.getElementById('video');
-  if (!video) return;
-  if (video.readyState < 2 || video.paused || video.ended) return;
-  if (!video.videoWidth || !video.videoHeight) return;
-
-  // Reutiliza canvas para performance
-  if (!_scanCanvas) {
-    _scanCanvas = document.getElementById('scanCanvas');
-    if (!_scanCanvas) return;
-    _scanCtx = _scanCanvas.getContext('2d', { willReadFrequently: true });
-  }
-
-  const w = video.videoWidth;
-  const h = video.videoHeight;
-  const scanSize = Math.min(w, h, 800);
-  if (_scanCanvas.width !== scanSize || _scanCanvas.height !== scanSize) {
-    _scanCanvas.width = scanSize;
-    _scanCanvas.height = scanSize;
-  }
-
-  try {
-    const sx = Math.max(0, (w - scanSize) / 2);
-    const sy = Math.max(0, (h - scanSize) / 2);
-    _scanCtx.drawImage(video, sx, sy, scanSize, scanSize, 0, 0, scanSize, scanSize);
-  } catch { return; }
-
-  let img;
-  try {
-    img = _scanCtx.getImageData(0, 0, scanSize, scanSize);
-  } catch { return; }
-
-  if (!window.jsQR) {
-    console.warn('jsQR não carregado ainda');
-    return;
-  }
-
-  const code = window.jsQR(img.data, img.width, img.height, {
-    inversionAttempts: 'attemptBoth'
-  });
-
-  if (code && !scanning) {
-    scanning = true;
-    const raw = code.data;
-    try {
-      const d = JSON.parse(raw);
-      processRefeicao(d.mat || raw);
-    } catch {
-      processRefeicao(raw);
-    }
-    setTimeout(() => { scanning = false; }, 3000);
-  }
-}
-
+// Código antigo de scanning removido - usando Html5QrcodeScanner agora
 // ══════════════════════════════════════════
 // HISTÓRICO
 // ══════════════════════════════════════════

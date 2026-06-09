@@ -1,0 +1,64 @@
+// firestore.rules
+// Cole estas regras no Firebase Console → Firestore → Rules
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Helpers ──
+    function isAuth() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuth() &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    function isOwner(uid) {
+      return isAuth() && request.auth.uid == uid;
+    }
+
+    // ── Usuários ──
+    match /users/{uid} {
+      allow read: if isOwner(uid) || isAdmin();
+      allow write: if isOwner(uid) || isAdmin();
+    }
+
+    // ── Emails autorizados ──
+    match /authorized_emails/{email} {
+      allow read: if isAuth();
+      allow write: if isAdmin();
+    }
+
+    // ── Alunos ──
+    // Leitura pública por matrícula (alunos sem login Firebase)
+    match /alunos/{id} {
+      allow read: if true;       // alunos buscam por matrícula sem autenticação
+      allow write: if isAdmin();
+    }
+
+    // ── Refeições ──
+    match /refeicoes/{id} {
+      allow read: if isAuth();
+      allow create: if isAuth();
+      allow update, delete: if isAdmin();
+    }
+
+    // ── Fila de aprovação de logins ──
+    match /pending_logins/{uid} {
+      allow create: if isOwner(uid);
+      allow read:   if isOwner(uid) || isAdmin();
+      allow delete: if isOwner(uid);
+      allow update: if isAdmin();
+    }
+
+    // ── Solicitações de acesso (novos usuários sem conta) ──
+    match /access_requests/{id} {
+      // Qualquer um pode criar (formulário público)
+      allow create: if true;
+      // Só admin pode ler e atualizar
+      allow read, update: if isAdmin();
+    }
+  }
+}

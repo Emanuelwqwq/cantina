@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CantinaSmart — Debug</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="loading-overlay" id="loading">
+  <div class="spinner"></div>
+  <div class="loading-text">Inicializando…</div>
+</div>
+
+<div class="toast-container" id="toasts"></div>
+
+<!-- AUTH SCREEN -->
+<div class="auth-screen" id="auth-screen">
+  <div class="auth-card">
+    <div class="auth-logo">
+      <i class="ti ti-bowl-chopsticks"></i>
+    </div>
+    <h1 class="auth-title">CantinaSmart</h1>
+    <p class="auth-subtitle">Controle de Refeições Escolar</p>
+
+    <div class="auth-tabs">
+      <button class="auth-tab-btn active" data-tab="login">
+        <i class="ti ti-login"></i> Entrar
+      </button>
+      <button class="auth-tab-btn" data-tab="signup">
+        <i class="ti ti-user-plus"></i> Registrar
+      </button>
+    </div>
+
+    <form class="auth-form active" id="login-form">
+      <div class="form-group full">
+        <label>Email</label>
+        <input type="email" id="login-email" placeholder="seu@email.com" required>
+      </div>
+      <div class="form-group full">
+        <label>Senha</label>
+        <input type="password" id="login-senha" placeholder="••••••••" required>
+      </div>
+      <button type="submit" class="btn btn-primary btn-block">
+        <i class="ti ti-login"></i> Entrar
+      </button>
+      <p class="auth-hint">Primeira vez? Registre-se abaixo</p>
+    </form>
+
+    <form class="auth-form" id="signup-form" style="display:none;">
+      <div class="form-group full">
+        <label>Nome completo</label>
+        <input type="text" id="signup-nome" placeholder="Seu nome" required>
+      </div>
+      <div class="form-group full">
+        <label>Email</label>
+        <input type="email" id="signup-email" placeholder="seu@email.com" required>
+      </div>
+      <div class="form-group full">
+        <label>Senha (mín. 6 caracteres)</label>
+        <input type="password" id="signup-senha" placeholder="••••••••" required>
+      </div>
+      <div class="form-group full">
+        <label>Confirmar senha</label>
+        <input type="password" id="signup-senha2" placeholder="••••••••" required>
+      </div>
+      <button type="submit" class="btn btn-primary btn-block">
+        <i class="ti ti-user-plus"></i> Criar conta
+      </button>
+      <p class="auth-hint">Já tem conta? Faça login acima</p>
+    </form>
+
+    <div class="auth-footer">
+      <p><small>🔒 Seus dados estão protegidos</small></p>
+    </div>
+  </div>
+</div>
+
+<!-- APP SCREEN -->
+<div class="app-screen" id="app-screen" style="display:none;">
+  <h2>App Screen (oculta por enquanto)</h2>
+</div>
+
+<div id="debug" style="position: fixed; bottom: 20px; right: 20px; background: #222; color: #0f0; padding: 15px; font-family: monospace; font-size: 11px; max-width: 300px; max-height: 200px; overflow-y: auto; border-radius: 5px; z-index: 10000;">
+  <strong>DEBUG LOG:</strong><br>
+  <div id="debug-log"></div>
+</div>
+
+<!-- Firebase SDK -->
+<script type="importmap">
+{
+  "imports": {
+    "firebase": "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js",
+    "firebase/auth": "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js",
+    "firebase/firestore": "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js"
+  }
+}
+</script>
+
+<script>
+  const debugLog = document.getElementById('debug-log');
+  
+  function log(msg) {
+    console.log(msg);
+    const p = document.createElement('div');
+    p.textContent = '> ' + msg;
+    debugLog.appendChild(p);
+    debugLog.scrollTop = debugLog.scrollHeight;
+  }
+  
+  log('1. Script inline carregou');
+  log('2. DOMContentLoaded vai disparar em breve...');
+</script>
+
+<script type="module">
+  const debugLog = document.getElementById('debug-log');
+  
+  function log(msg) {
+    console.log(msg);
+    const p = document.createElement('div');
+    p.textContent = '> ' + msg;
+    debugLog.appendChild(p);
+    debugLog.scrollTop = debugLog.scrollHeight;
+  }
+
+  log('3. Script módulo carregou');
+
+  document.addEventListener('DOMContentLoaded', () => {
+    log('4. DOMContentLoaded disparou!');
+    log('5. auth-screen visível? ' + (document.getElementById('auth-screen').style.display !== 'none'));
+  });
+
+  log('6. Aguardando DOMContentLoaded...');
+
+  // Também testa o carregamento do app.js
+  try {
+    log('7. Importando app.js...');
+    await import('./app.js');
+    log('8. ✓ app.js importado!');
+  } catch (e) {
+    log('8. ✗ Erro: ' + e.message);
+  }
+</script>
+
+</body>
+</html>
